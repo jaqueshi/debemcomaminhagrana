@@ -1808,6 +1808,15 @@ function addLanc(){
   } else {
     state.lancamentos.push({id:state.nextId++,desc,cat,tipo,val,data,pgto,cartaoId,naFatura:!!naFatura});
   }
+  // Auto-check contas fixas: se a descrição do lançamento bate com alguma conta fixa, marcar como paga
+  if(tipo==='despesa'){
+    const descLower=desc.toLowerCase();
+    (state.fixas||[]).forEach(f=>{
+      if(!f.pago && f.nome && descLower.includes(f.nome.toLowerCase())){
+        f.pago=true;
+      }
+    });
+  }
   saveData();render();
 }
 function delLanc(id){state.lancamentos=state.lancamentos.filter(l=>l.id!==id);saveData();render();}
@@ -1839,14 +1848,50 @@ function addToMeta(id){
   const val=parseFloat(document.getElementById('madd-'+id).value);
   if(!val||val<=0) return;
   const m=state.metas.find(m=>m.id===id);
-  if(m) m.atual=Math.min(m.atual+val,m.total);
+  if(!m) return;
+  const antigo=m.atual;
+  m.atual=Math.min(m.atual+val,m.total);
+  const guardado=m.atual-antigo;
+  // Descontar do saldo disponível: lança despesa automática
+  if(guardado>0){
+    const hoje=new Date().toISOString().split('T')[0];
+    state.lancamentos.push({
+      id:state.nextId++,
+      desc:`💰 Meta: ${m.nome}`,
+      cat:'Emergência',
+      tipo:'despesa',
+      val:guardado,
+      data:hoje,
+      pgto:'',
+      origemMeta:true,
+      metaId:id
+    });
+  }
   saveData();render();
 }
 function subFromMeta(id){
   const val=parseFloat(document.getElementById('madd-'+id).value);
   if(!val||val<=0) return;
   const m=state.metas.find(m=>m.id===id);
-  if(m) m.atual=Math.max(m.atual-val,0);
+  if(!m) return;
+  const antigo=m.atual;
+  m.atual=Math.max(m.atual-val,0);
+  const retirado=antigo-m.atual;
+  // Ao retirar, devolver ao saldo: lança receita automática
+  if(retirado>0){
+    const hoje=new Date().toISOString().split('T')[0];
+    state.lancamentos.push({
+      id:state.nextId++,
+      desc:`↩️ Retirada meta: ${m.nome}`,
+      cat:'Renda extra',
+      tipo:'receita',
+      val:retirado,
+      data:hoje,
+      pgto:'',
+      origemMeta:true,
+      metaId:id
+    });
+  }
   saveData();render();
 }
 function delMeta(id){state.metas=state.metas.filter(m=>m.id!==id);saveData();render();}
