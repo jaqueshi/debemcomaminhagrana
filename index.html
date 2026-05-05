@@ -1277,7 +1277,8 @@ function renderDash(){
   const investido=state.metas.reduce((a,m)=>a+(m.atual||0),0);
   // Resumo contas fixas
   const hoje2=new Date().getDate();
-  const fixasPend=(state.fixas||[]).filter(f=>!f.pago);
+  const mesAtualNum=now.getMonth()+1;const anoAtualNum=now.getFullYear();
+  const fixasPend=(state.fixas||[]).filter(f=>!fixaPagaNoMes(f,mesAtualNum,anoAtualNum));
   const fixasAtrasadas=fixasPend.filter(f=>f.dia<hoje2);
   const fixasHoje=fixasPend.filter(f=>f.dia===hoje2);
   const fixasProximas=fixasPend.filter(f=>f.dia>hoje2&&f.dia-hoje2<=7);
@@ -1545,19 +1546,22 @@ function renderMetas(){
 }
 
 function renderFixas(){
-  const hoje=new Date().getDate();
+  const mesAtualNum=now.getMonth()+1;
+  const anoAtualNum=now.getFullYear();
+  const hoje=now.getDate();
   const fixas=state.fixas||[];
   const total=fixas.reduce((a,f)=>a+(f.val||0),0);
-  const pendentes=fixas.filter(f=>!f.pago).length;
+  const pendentes=fixas.filter(f=>!fixaPagaNoMes(f,mesAtualNum,anoAtualNum)).length;
   const cards=fixas.map(f=>{
+    const pago=fixaPagaNoMes(f,mesAtualNum,anoAtualNum);
     const dias=f.dia-hoje;
     let badge='';
-    if(f.pago) badge='<span class="fixa-badge ok">✓ Pago</span>';
+    if(pago) badge='<span class="fixa-badge ok">✓ Pago</span>';
     else if(dias<0) badge='<span class="fixa-badge" style="background:var(--red-bg);color:var(--red)">⚠ Atrasado</span>';
     else if(dias===0) badge='<span class="fixa-badge" style="background:var(--red-bg);color:var(--red)">Vence hoje!</span>';
     else if(dias<=5) badge=`<span class="fixa-badge">Em ${dias}d</span>`;
-    return `<div class="fixa-card ${f.pago?'fixa-paga':''}">
-      <div class="fixa-check"><input type="checkbox" ${f.pago?'checked':''} onchange="togglePago(${f.id})" /></div>
+    return `<div class="fixa-card ${pago?'fixa-paga':''}">
+      <div class="fixa-check"><input type="checkbox" ${pago?'checked':''} onchange="togglePago(${f.id})" /></div>
       <div class="fixa-info" style="flex:1">
         <div class="fixa-nome">${f.nome} ${badge}</div>
         <div class="fixa-dia">📅 Todo dia ${String(f.dia).padStart(2,'0')} de cada mês</div>
@@ -1568,7 +1572,7 @@ function renderFixas(){
         </div>
       </div>
       <div style="flex-shrink:0">
-        ${f.val?`<span class="fixa-val" style="${f.pago?'text-decoration:line-through;opacity:.5':''}">${fmt(f.val)}</span>`:''}
+        ${f.val?`<span class="fixa-val" style="${pago?'text-decoration:line-through;opacity:.5':''}">` + fmt(f.val) + `</span>`:''}
       </div>
     </div>`;
   }).join('');
@@ -1808,12 +1812,16 @@ function addLanc(){
   } else {
     state.lancamentos.push({id:state.nextId++,desc,cat,tipo,val,data,pgto,cartaoId,naFatura:!!naFatura});
   }
-  // Auto-check contas fixas: se a descrição do lançamento bate com alguma conta fixa, marcar como paga
+  // Auto-check contas fixas: se a descrição bate com alguma conta fixa, marcar como paga no mês atual
   if(tipo==='despesa'){
     const descLower=desc.toLowerCase();
+    const mesHoje=now.getMonth()+1;
+    const anoHoje=now.getFullYear();
+    const keyHoje=mesKey(mesHoje,anoHoje);
     (state.fixas||[]).forEach(f=>{
-      if(!f.pago && f.nome && descLower.includes(f.nome.toLowerCase())){
-        f.pago=true;
+      if(!fixaPagaNoMes(f,mesHoje,anoHoje) && f.nome && descLower.includes(f.nome.toLowerCase())){
+        if(!f.pagoMeses) f.pagoMeses=[];
+        if(!f.pagoMeses.includes(keyHoje)) f.pagoMeses.push(keyHoje);
       }
     });
   }
@@ -1895,13 +1903,19 @@ function subFromMeta(id){
   saveData();render();
 }
 function delMeta(id){state.metas=state.metas.filter(m=>m.id!==id);saveData();render();}
+// Chave do mes atual: "YYYY-MM"
+function mesKey(mes,ano){ return `${ano}-${String(mes).padStart(2,'0')}`; }
+function fixaPagaNoMes(f,mes,ano){
+  if(!f.pagoMeses) return !!f.pago; // compatibilidade dados antigos
+  return f.pagoMeses.includes(mesKey(mes,ano));
+}
 function addFixa(){
   const nome=document.getElementById('f-nome').value.trim();
   const dia=parseInt(document.getElementById('f-dia').value);
   const val=parseFloat(document.getElementById('f-vl').value)||0;
   if(!nome||!dia||dia<1||dia>31) return;
   if(!state.fixas) state.fixas=[];
-  state.fixas.push({id:state.nextId++,nome,dia,val,pago:false});
+  state.fixas.push({id:state.nextId++,nome,dia,val,pagoMeses:[]});
   saveData();render();
 }
 function delFixa(id){state.fixas=state.fixas.filter(f=>f.id!==id);saveData();render();}
@@ -1913,7 +1927,12 @@ function editFixaVal(id){
 }
 function togglePago(id){
   const f=(state.fixas||[]).find(f=>f.id===id);
-  if(f) f.pago=!f.pago;
+  if(!f) return;
+  if(!f.pagoMeses) f.pagoMeses=[];
+  const key=mesKey(now.getMonth()+1, now.getFullYear());
+  const idx=f.pagoMeses.indexOf(key);
+  if(idx>=0) f.pagoMeses.splice(idx,1);
+  else f.pagoMeses.push(key);
   saveData();render();
 }
 function downloadCSV(){
@@ -2229,18 +2248,19 @@ function limparTodasNotifs(){
 
 function gerarListaNotifs(){
   const hoje=new Date().getDate();
+  const mesAtualNum=now.getMonth()+1;const anoAtualNum=now.getFullYear();
   const fixas=state.fixas||[];
   const notifs=[];
 
-  fixas.filter(f=>!f.pago&&f.dia<hoje).forEach(f=>{
+  fixas.filter(f=>!fixaPagaNoMes(f,mesAtualNum,anoAtualNum)&&f.dia<hoje).forEach(f=>{
     const id=gerarIdNotif('atrasada_'+f.nome+f.id);
     notifs.push({id,tipo:'urgente',icon:'🚨',titulo:`${f.nome} atrasada!`,sub:`Vencia dia ${String(f.dia).padStart(2,'0')} — dê o check quando pagar`});
   });
-  fixas.filter(f=>!f.pago&&f.dia===hoje).forEach(f=>{
+  fixas.filter(f=>!fixaPagaNoMes(f,mesAtualNum,anoAtualNum)&&f.dia===hoje).forEach(f=>{
     const id=gerarIdNotif('hoje_'+f.nome+f.id);
     notifs.push({id,tipo:'urgente',icon:'⏰',titulo:`${f.nome} vence hoje!`,sub:f.val?`Valor: ${fmt(f.val)}`:'Não esqueça de pagar!'});
   });
-  fixas.filter(f=>!f.pago&&f.dia>hoje&&f.dia-hoje<=5).forEach(f=>{
+  fixas.filter(f=>!fixaPagaNoMes(f,mesAtualNum,anoAtualNum)&&f.dia>hoje&&f.dia-hoje<=5).forEach(f=>{
     const dias=f.dia-hoje;
     const id=gerarIdNotif('proxima_'+f.nome+f.id);
     notifs.push({id,tipo:'aviso',icon:'📅',titulo:`${f.nome} em ${dias} dia${dias>1?'s':''}`,sub:f.val?`Valor: ${fmt(f.val)}`:`Dia ${String(f.dia).padStart(2,'0')}`});
