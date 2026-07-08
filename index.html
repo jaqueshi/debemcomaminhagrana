@@ -1267,13 +1267,27 @@ function showTab(t,btn){
 }
 function render(){renderDash();renderLanc();renderOrc();renderMetas();renderFixas();renderCartoes();renderRelatorio();renderDividas();atualizarNotificacoes();}
 
+// Soma tudo o que aconteceu ANTES do mês/ano informado (receitas - despesas que afetam saldo),
+// para que o saldo que sobrou em um mês continue disponível no mês seguinte.
+function saldoAcumuladoAnterior(mes,ano){
+  return state.lancamentos.filter(l=>{
+    if(!l.data) return false;
+    if(l.tipo==='despesa'&&l.naFatura) return false; // fatura só afeta o saldo quando paga
+    const [y,m]=l.data.split('-').map(Number);
+    return (y<ano)||(y===ano&&m<mes);
+  }).reduce((acc,l)=>acc+(l.tipo==='receita'?l.val:-l.val),0);
+}
+
 function renderDash(){
   const lancs=lancFiltrados();
   const rec=lancs.filter(l=>l.tipo==='receita').reduce((a,l)=>a+l.val,0);
   // Despesas na fatura do cartão NÃO afetam o saldo (só saem quando pagar a fatura)
   const desp=lancs.filter(l=>l.tipo==='despesa'&&!l.naFatura).reduce((a,l)=>a+l.val,0);
   const despCartao=lancs.filter(l=>l.tipo==='despesa'&&l.naFatura).reduce((a,l)=>a+l.val,0);
-  const saldo=rec-desp;
+  // Se estiver filtrando por período customizado (data início/fim), não há "mês" para acumular saldo anterior
+  const saldoAnterior=(filterDataInicio||filterDataFim)?0:saldoAcumuladoAnterior(filterMes,filterAno);
+  const saldoMes=rec-desp;
+  const saldo=saldoAnterior+saldoMes;
   const investido=state.metas.reduce((a,m)=>a+(m.atual||0),0);
   // Resumo contas fixas
   const hoje2=new Date().getDate();
@@ -1316,7 +1330,8 @@ function renderDash(){
       <div class="card" style="border-color:#A8C8F0"><div class="label" style="color:var(--blue)">Investido</div><div class="value" style="color:var(--blue)">${fmt(investido)}</div><div style="font-size:11px;color:var(--muted);margin-top:4px">${state.metas.length} meta${state.metas.length!==1?'s':''}</div></div>
     </div>
     <div class="saldo-block">
-      <div class="saldo-row"><span>Total de receitas</span><span style="color:var(--green);font-family:'DM Mono',monospace">${fmt(rec)}</span></div>
+      ${saldoAnterior!==0?`<div class="saldo-row"><span class="lbl">Saldo anterior</span><span style="color:${saldoAnterior>=0?'var(--green)':'var(--red)'};font-family:'DM Mono',monospace">${fmt(saldoAnterior)}</span></div>`:''}
+      <div class="saldo-row"><span class="lbl">Total de receitas</span><span style="color:var(--green);font-family:'DM Mono',monospace">${fmt(rec)}</span></div>
       <div class="saldo-row"><span class="lbl">Total de despesas</span><span style="color:var(--red);font-family:'DM Mono',monospace">− ${fmt(desp)}</span></div>
       <div class="saldo-row"><span>Saldo disponível</span><span style="color:${saldo>=0?'var(--green)':'var(--red)'};font-family:'DM Mono',monospace">${fmt(saldo)}</span></div>
     </div>
@@ -2266,11 +2281,12 @@ function gerarListaNotifs(){
     notifs.push({id,tipo:'aviso',icon:'📅',titulo:`${f.nome} em ${dias} dia${dias>1?'s':''}`,sub:f.val?`Valor: ${fmt(f.val)}`:`Dia ${String(f.dia).padStart(2,'0')}`});
   });
 
-  // Saldo baixo
+  // Saldo baixo (considera saldo acumulado de meses anteriores)
   const lancs=lancFiltrados();
   const rec=lancs.filter(l=>l.tipo==='receita').reduce((a,l)=>a+l.val,0);
   const desp=lancs.filter(l=>l.tipo==='despesa').reduce((a,l)=>a+l.val,0);
-  const saldo=rec-desp;
+  const saldoAntNotif=(filterDataInicio||filterDataFim)?0:saldoAcumuladoAnterior(filterMes,filterAno);
+  const saldo=saldoAntNotif+rec-desp;
   if(saldo<100&&(rec>0||desp>0)){
     notifs.push({id:'saldo_baixo',tipo:'aviso',icon:'💸',titulo:'Saldo baixo!',sub:`Saldo disponível: ${fmt(saldo)}`});
   }
